@@ -1,0 +1,22 @@
+# Secrets & credentials
+config.yaml
+*.env
+.env
+
+# Your personal data
+recordings/
+*.db
+*.sqlite
+known_faces/
+
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# macOS
+.DS_Store
+
+# Logs
+*.log

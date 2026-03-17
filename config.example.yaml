@@ -1,0 +1,30 @@
+# Copy to config.yaml and fill in your values
+
+cameras:
+  - id: front_door
+    name: "Front Door"
+    rtsp_url: "rtsp://USERNAME:PASSWORD@CAMERA_IP:554"
+    rtsp_path: "/h264Preview_01_main"  # Reolink default; adjust per brand
+    zones:
+      - name: "driveway"
+        sensitivity: medium
+
+ai:
+  anthropic_api_key: "YOUR_ANTHROPIC_API_KEY_HERE"
+  vision_model: "claude-opus-4-20250514"
+  chat_model: "claude-haiku-4-5"
+  analyze_cooldown_seconds: 20
+
+storage:
+  db_path: "./home_monitor.db"
+  recordings_dir: "./recordings"
+  keep_days: 7
+
+zigbee:
+  mqtt_broker: "localhost"
+  mqtt_port: 1883
+
+dashboard:
+  host: "0.0.0.0"
+  port: 8080
+  secret_key: "CHANGE-THIS-TO-A-RANDOM-STRING"

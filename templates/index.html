@@ -1,0 +1,1351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="HomeAI">
+<meta name="theme-color" content="#0d0f14">
+<link rel="manifest" href="/manifest.json">
+<script>
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js');
+  }
+</script>
+<title>Home AI Monitor</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+<style>
+  :root {
+    --bg: #0d0f14; --surface: #161a22; --surface2: #1e2430;
+    --border: #2a3040; --accent: #3b82f6; --text: #e2e8f0;
+    --muted: #64748b; --high: #ef4444; --medium: #f59e0b; --low: #22c55e;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; min-height: 100vh; }
+
+  header {
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 14px 24px; display: flex; align-items: center;
+    justify-content: space-between; position: sticky; top: 0; z-index: 100;
+  }
+  .logo { display: flex; align-items: center; gap: 10px; }
+  .logo-dot { width: 10px; height: 10px; background: var(--low); border-radius: 50%; animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+  .logo h1 { font-size: 1.1rem; font-weight: 600; letter-spacing: 0.05em; }
+  #clock { color: var(--muted); font-size: 0.85rem; font-variant-numeric: tabular-nums; }
+
+  .layout { display: grid; grid-template-columns: 1fr 320px; height: calc(100vh - 53px); }
+  .main-panel { overflow-y: auto; padding: 20px; }
+  .side-panel { background: var(--surface); border-left: 1px solid var(--border); overflow-y: auto; display: flex; flex-direction: column; }
+  .section-title { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); margin-bottom: 12px; }
+
+  /* ── Alarm Panel ── */
+  .alarm-panel {
+    border-radius: 12px; padding: 18px; margin-bottom: 24px;
+    border: 2px solid var(--border); background: var(--surface);
+    transition: border-color 0.3s, background 0.3s;
+  }
+  .alarm-panel.armed-home  { border-color: var(--medium); background: rgba(245,158,11,0.07); }
+  .alarm-panel.armed-away  { border-color: var(--high); background: rgba(239,68,68,0.07); }
+  .alarm-panel.triggered   { border-color: var(--high); background: rgba(239,68,68,0.15); animation: alarmPulse 0.8s infinite; }
+  @keyframes alarmPulse { 0%,100%{background:rgba(239,68,68,0.1)} 50%{background:rgba(239,68,68,0.25)} }
+
+  .alarm-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+  .alarm-status-text { font-size: 1rem; font-weight: 700; letter-spacing: 0.05em; }
+  .alarm-status-text.DISARMED   { color: var(--low); }
+  .alarm-status-text.ARMED_HOME { color: var(--medium); }
+  .alarm-status-text.ARMED_AWAY { color: var(--high); }
+  .alarm-status-text.TRIGGERED  { color: var(--high); }
+
+  .alarm-icon { font-size: 1.6rem; }
+
+  .alarm-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+  .alarm-btn {
+    flex: 1; min-width: 80px; padding: 8px 12px;
+    border: none; border-radius: 8px; cursor: pointer;
+    font-size: 0.78rem; font-weight: 700; letter-spacing: 0.04em;
+    transition: opacity 0.2s, transform 0.1s;
+  }
+  .alarm-btn:active { transform: scale(0.97); }
+  .alarm-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+  .btn-home  { background: rgba(245,158,11,0.2); color: var(--medium); border: 1px solid var(--medium); }
+  .btn-away  { background: rgba(239,68,68,0.2);  color: var(--high);   border: 1px solid var(--high); }
+  .btn-disarm{ background: rgba(34,197,94,0.2);  color: var(--low);    border: 1px solid var(--low); }
+
+  .alarm-countdown {
+    margin-top: 12px; font-size: 0.85rem; color: var(--medium);
+    font-weight: 600; display: none;
+  }
+
+  /* PIN modal */
+  .modal-overlay {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,0.7); z-index: 500;
+    align-items: center; justify-content: center;
+  }
+  .modal-overlay.active { display: flex; }
+  .modal {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 16px; padding: 28px; width: 280px;
+    display: flex; flex-direction: column; gap: 14px;
+  }
+  .modal h3 { font-size: 1rem; text-align: center; }
+  .pin-display {
+    text-align: center; letter-spacing: 0.4em;
+    font-size: 1.8rem; min-height: 2.2rem; color: var(--accent);
+  }
+  .pin-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; }
+  .pin-key {
+    padding: 14px; background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 8px; text-align: center; cursor: pointer;
+    font-size: 1rem; font-weight: 600; transition: background 0.15s;
+  }
+  .pin-key:hover { background: var(--border); }
+  .pin-error { color: var(--high); font-size: 0.8rem; text-align: center; display: none; }
+  .modal-cancel { color: var(--muted); font-size: 0.8rem; text-align: center; cursor: pointer; }
+  .modal-cancel:hover { color: var(--text); }
+
+  /* ── Camera Grid ── */
+  .camera-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; margin-bottom: 24px; }
+  .camera-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .camera-feed { width: 100%; aspect-ratio: 16/9; background: #000; display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; }
+  .camera-feed img { width: 100%; height: 100%; object-fit: cover; }
+  .camera-feed .placeholder { color: var(--muted); font-size: 0.8rem; }
+  .camera-label { padding: 8px 12px; display: flex; align-items: center; justify-content: space-between; font-size: 0.8rem; }
+  .camera-name { font-weight: 600; }
+  .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+  .status-dot.online { background: var(--low); }
+  .motion-flash { position: absolute; inset: 0; border: 2px solid var(--medium); pointer-events: none; opacity: 0; }
+  .motion-flash.active { animation: flash 1.2s ease-out forwards; }
+  @keyframes flash { 0%{opacity:1} 100%{opacity:0} }
+
+  /* ── Sensors ── */
+  .sensor-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px,1fr)); gap: 8px; }
+  .sensor-card { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 4px; transition: border-color 0.3s; }
+  .sensor-card.open { border-color: var(--high); background: rgba(239,68,68,0.07); }
+  .sensor-icon { font-size: 1.3rem; }
+  .sensor-name { font-size: 0.75rem; font-weight: 600; }
+  .sensor-status { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
+  .sensor-status.open { color: var(--high); }
+  .sensor-status.closed { color: var(--low); }
+  .sensor-battery { font-size: 0.65rem; color: var(--muted); margin-top: 2px; }
+
+  /* ── Side panel ── */
+  .side-header { padding: 16px; border-bottom: 1px solid var(--border); font-size: 0.7rem; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); display: flex; justify-content: space-between; align-items: center; }
+  .event-count { background: var(--accent); color: white; border-radius: 10px; padding: 1px 7px; font-size: 0.65rem; }
+  #event-log { flex: 1; overflow-y: auto; }
+  .event-item { padding: 12px 16px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 3px; animation: slideIn 0.3s ease-out; }
+  @keyframes slideIn { from{opacity:0;transform:translateX(10px)} to{opacity:1;transform:translateX(0)} }
+  .event-header { display: flex; justify-content: space-between; align-items: center; }
+  .event-camera { font-size: 0.8rem; font-weight: 600; }
+  .event-time { font-size: 0.65rem; color: var(--muted); }
+  .event-desc { font-size: 0.72rem; color: var(--muted); line-height: 1.4; }
+  .priority-badge { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 0.6rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+  .priority-HIGH   { background: rgba(239,68,68,0.2); color: var(--high); }
+  .priority-MEDIUM { background: rgba(245,158,11,0.2); color: var(--medium); }
+  .priority-LOW    { background: rgba(34,197,94,0.2); color: var(--low); }
+  .event-snapshot { width: 100%; border-radius: 4px; margin-top: 4px; max-height: 120px; object-fit: cover; cursor: pointer; }
+
+  /* ── Lightbox ── */
+  #lightbox { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 999; align-items: center; justify-content: center; }
+  #lightbox.active { display: flex; }
+  #lightbox img { max-width: 90vw; max-height: 90vh; border-radius: 8px; }
+
+  /* ── Storage Bar ── */
+  .storage-bar-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px; margin-bottom: 8px;
+    transition: border-color 0.3s;
+  }
+  .storage-bar-card.warn     { border-color: var(--medium); }
+  .storage-bar-card.critical { border-color: var(--high); }
+
+  .storage-bar-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; font-size: 0.82rem; }
+  .storage-manage-btn {
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 6px; padding: 4px 10px; color: var(--text);
+    cursor: pointer; font-size: 0.75rem;
+  }
+  .storage-manage-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  .storage-track { height: 8px; background: var(--surface2); border-radius: 4px; overflow: hidden; }
+  .storage-fill  { height: 100%; border-radius: 4px; background: var(--low); transition: width 0.6s ease, background 0.3s; }
+  .storage-fill.warn     { background: var(--medium); }
+  .storage-fill.critical { background: var(--high); }
+
+  .storage-detail { font-size: 0.68rem; color: var(--muted); margin-top: 6px; }
+
+  /* suggestion rows in storage modal */
+  .suggestion-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 0.8rem;
+  }
+  .suggestion-row:last-child { border-bottom: none; }
+  .suggestion-meta { font-size: 0.68rem; color: var(--muted); }
+  .suggestion-btn {
+    background: rgba(239,68,68,0.15); border: 1px solid var(--high);
+    color: var(--high); border-radius: 6px; padding: 4px 10px;
+    cursor: pointer; font-size: 0.72rem; white-space: nowrap;
+  }
+  .suggestion-btn:hover { background: rgba(239,68,68,0.25); }
+
+  @media(max-width:768px) { .layout{grid-template-columns:1fr} .side-panel{border-left:none;border-top:1px solid var(--border);height:400px} }
+
+  /* ── Side tabs ── */
+  .side-tabs { display:flex; border-bottom: 1px solid var(--border); background: var(--surface); flex-shrink:0; }
+  .side-tab {
+    flex: 1; padding: 11px 8px; font-size: 0.78rem; font-weight: 600;
+    background: none; border: none; color: var(--muted); cursor: pointer;
+    border-bottom: 2px solid transparent; transition: color 0.2s, border-color 0.2s;
+  }
+  .side-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .side-pane { flex: 1; overflow-y: auto; display: flex; flex-direction: column; }
+
+  /* ── Chat ── */
+  .chat-messages {
+    flex: 1; overflow-y: auto; padding: 14px 12px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .chat-msg { display: flex; }
+  .chat-msg.user { justify-content: flex-end; }
+  .chat-msg.assistant { justify-content: flex-start; }
+  .chat-bubble {
+    max-width: 86%; padding: 9px 13px; border-radius: 14px;
+    font-size: 0.8rem; line-height: 1.55; white-space: pre-wrap;
+  }
+  .chat-msg.user .chat-bubble {
+    background: var(--accent); color: #fff;
+    border-bottom-right-radius: 4px;
+  }
+  .chat-msg.assistant .chat-bubble {
+    background: var(--surface2); color: var(--text);
+    border-bottom-left-radius: 4px;
+  }
+  .chat-msg.thinking .chat-bubble { color: var(--muted); font-style: italic; }
+  .chat-suggestions {
+    padding: 8px 12px; display: flex; flex-wrap: wrap; gap: 6px; flex-shrink: 0;
+    border-top: 1px solid var(--border);
+  }
+  .chat-suggestions button {
+    background: var(--surface2); border: 1px solid var(--border);
+    color: var(--muted); border-radius: 20px; padding: 4px 10px;
+    font-size: 0.7rem; cursor: pointer; transition: color 0.2s, border-color 0.2s;
+  }
+  .chat-suggestions button:hover { color: var(--accent); border-color: var(--accent); }
+  /* ── Upload / image preview ── */
+  .chat-attach-btn {
+    background: none; border: 1px solid var(--border); border-radius: 6px;
+    color: var(--muted); cursor: pointer; font-size: 1rem; padding: 6px 9px;
+    flex-shrink: 0; transition: all .15s;
+  }
+  .chat-attach-btn:hover { color: var(--accent); border-color: var(--accent); }
+  .chat-attach-btn.has-image { color: var(--accent); border-color: var(--accent); background: rgba(59,130,246,.1); }
+  #chat-image-preview {
+    margin: 6px 12px 0; display: none; position: relative;
+  }
+  #chat-image-preview img {
+    max-height: 120px; max-width: 100%; border-radius: 8px;
+    border: 1px solid var(--accent); display: block;
+  }
+  .preview-remove {
+    position: absolute; top: 4px; right: 4px; background: rgba(0,0,0,.7);
+    color: #fff; border: none; border-radius: 50%; width: 20px; height: 20px;
+    cursor: pointer; font-size: .7rem; line-height: 20px; text-align: center; padding: 0;
+  }
+  .chat-drop-hint {
+    font-size: .75rem; color: var(--muted); text-align: center;
+    padding: 4px 0 2px; display: none;
+  }
+  .chat-pane-dragging .chat-drop-hint { display: block; color: var(--accent); }
+  .chat-pane-dragging #pane-chat { outline: 2px dashed var(--accent); outline-offset: -4px; }
+
+  .chat-input-row {
+    display: flex; gap: 8px; padding: 10px 12px; flex-shrink: 0;
+    border-top: 1px solid var(--border);
+  }
+  .chat-input {
+    flex: 1; background: var(--surface2); border: 1px solid var(--border);
+    color: var(--text); border-radius: 8px; padding: 8px 12px; font-size: 0.82rem;
+    outline: none;
+  }
+  .chat-input:focus { border-color: var(--accent); }
+  .chat-send-btn {
+    background: var(--accent); border: none; color: #fff;
+    border-radius: 8px; padding: 0 14px; cursor: pointer; font-size: 1rem;
+    transition: opacity 0.2s;
+  }
+  .chat-send-btn:disabled { opacity: 0.4; cursor: default; }
+  .chat-clear { font-size: 0.68rem; color: var(--muted); cursor: pointer; padding: 0 12px 6px; text-align: right; }
+  .chat-clear:hover { color: var(--high); }
+
+
+  /* ── Event / Video Modal ── */
+  .event-modal-inner {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 16px; width: min(760px, 96vw);
+    max-height: 92vh; overflow: hidden;
+    display: flex; flex-direction: column;
+    position: relative;
+    animation: fadeUp 0.2s ease;
+  }
+  @keyframes fadeUp { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:translateY(0)} }
+  .event-modal-close {
+    position: absolute; top: 12px; right: 14px; z-index: 10;
+    background: rgba(0,0,0,0.5); border: none; color: #fff;
+    border-radius: 50%; width: 30px; height: 30px; cursor: pointer;
+    font-size: 0.9rem; display: flex; align-items: center; justify-content: center;
+  }
+  .event-modal-media {
+    background: #000; width: 100%; max-height: 460px;
+    display: flex; align-items: center; justify-content: center;
+    overflow: hidden; border-radius: 16px 16px 0 0;
+  }
+  .event-modal-media video {
+    width: 100%; max-height: 460px; object-fit: contain; display: block;
+  }
+  .event-modal-media img {
+    width: 100%; max-height: 460px; object-fit: contain; display: block;
+  }
+  .event-modal-media .no-media {
+    color: var(--muted); padding: 60px; text-align: center; font-size: 0.85rem;
+  }
+  .event-modal-meta {
+    padding: 16px 20px; display: flex; flex-direction: column; gap: 6px;
+  }
+  .event-modal-title {
+    font-size: 0.95rem; font-weight: 600; color: var(--text);
+  }
+  .event-modal-detail {
+    font-size: 0.78rem; color: var(--muted); line-height: 1.6;
+  }
+  .event-modal-badges { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+  .event-badge {
+    font-size: 0.68rem; padding: 3px 9px; border-radius: 20px;
+    border: 1px solid var(--border); color: var(--muted);
+  }
+  .event-badge.high   { border-color: var(--high);   color: var(--high); }
+  .event-badge.medium { border-color: var(--medium); color: var(--medium); }
+  .event-badge.low    { border-color: var(--low);    color: var(--low); }
+  .event-modal-dl { margin-top: 8px; display: flex; gap: 8px; }
+  .event-dl-btn {
+    font-size: 0.72rem; padding: 5px 12px; border-radius: 6px;
+    background: var(--surface2); border: 1px solid var(--border);
+    color: var(--muted); cursor: pointer; text-decoration: none;
+    transition: color 0.2s, border-color 0.2s;
+  }
+  .event-dl-btn:hover { color: var(--accent); border-color: var(--accent); }
+
+  /* ── Chat event card (inline in chat bubble) ── */
+  .chat-event-card {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 6px 10px; margin: 4px 0;
+    cursor: pointer; transition: border-color 0.2s, background 0.2s;
+    max-width: 100%; width: 100%;
+  }
+  .chat-event-card:hover { border-color: var(--accent); background: var(--surface2); }
+  .chat-event-thumb {
+    width: 54px; height: 36px; border-radius: 6px; object-fit: cover;
+    background: #000; flex-shrink: 0;
+  }
+  .chat-event-thumb-placeholder {
+    width: 54px; height: 36px; border-radius: 6px;
+    background: var(--surface2); display: flex; align-items: center;
+    justify-content: center; font-size: 1.1rem; flex-shrink: 0;
+  }
+  .chat-event-info { flex: 1; min-width: 0; }
+  .chat-event-time { font-size: 0.68rem; color: var(--muted); }
+  .chat-event-desc { font-size: 0.75rem; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .chat-event-play { color: var(--accent); font-size: 1rem; flex-shrink: 0; }
+
+  /* Old side-header no longer used but kept for compat */
+  .side-header { display:none; }
+
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-dot" id="conn-dot"></div>
+    <h1>🏠 Home AI Monitor</h1>
+  </div>
+  <span id="clock"></span>
+</header>
+
+<div class="layout">
+  <div class="main-panel">
+
+    <!-- ── Alarm Panel ── -->
+    <div class="section-title">Alarm System</div>
+    <div class="alarm-panel" id="alarm-panel">
+      <div class="alarm-header">
+        <div>
+          <div class="alarm-status-text DISARMED" id="alarm-status-text">🟢 DISARMED</div>
+          <div style="font-size:0.7rem;color:var(--muted);margin-top:3px" id="alarm-sub">System is off — cameras monitoring normally</div>
+        </div>
+        <div class="alarm-icon" id="alarm-icon">🔓</div>
+      </div>
+      <div class="alarm-buttons">
+        <button class="alarm-btn btn-home" id="btn-arm-home" onclick="armAlarm('ARMED_HOME')">🌙 Arm (Home)</button>
+        <button class="alarm-btn btn-away" id="btn-arm-away" onclick="armAlarm('ARMED_AWAY')">🔒 Arm (Away)</button>
+        <button class="alarm-btn btn-disarm" id="btn-disarm" onclick="showPinModal()" disabled>🔓 Disarm</button>
+      </div>
+      <div class="alarm-countdown" id="alarm-countdown"></div>
+    </div>
+
+    <!-- ── Cameras ── -->
+    <div class="section-title">Live Cameras</div>
+    <div class="camera-grid" id="camera-grid"></div>
+
+    <!-- ── Sensors ── -->
+    <div class="section-title">Door &amp; Window Sensors</div>
+    <div class="sensor-grid" id="sensor-grid"></div>
+
+    <!-- ── Storage Bar ── -->
+    <div class="section-title" style="margin-top:24px">Storage</div>
+    <div class="storage-bar-card" id="storage-bar-card">
+      <div class="storage-bar-header">
+        <span id="storage-summary">Checking storage…</span>
+        <button class="storage-manage-btn" onclick="openStorageModal()">🗑 Manage</button>
+      </div>
+      <div class="storage-track">
+        <div class="storage-fill" id="storage-fill" style="width:0%"></div>
+      </div>
+      <div class="storage-detail" id="storage-detail"></div>
+    </div>
+  </div>
+
+  <div class="side-panel">
+    <!-- Tab bar -->
+    <div class="side-tabs">
+      <button class="side-tab active" id="tab-log"  onclick="switchTab('log')">📋 Events <span class="event-count" id="event-count">0</span></button>
+      <button class="side-tab"        id="tab-chat" onclick="switchTab('chat')">💬 Ask AI</button>
+    </div>
+
+    <!-- Event log pane -->
+    <div id="pane-log" class="side-pane">
+      <div id="event-log"></div>
+    </div>
+
+    <!-- Chat pane -->
+    <div id="pane-chat" class="side-pane" style="display:none; flex-direction:column; height:100%;">
+      <div id="chat-messages" class="chat-messages">
+        <div class="chat-msg assistant">
+          <div class="chat-bubble">
+            👋 Hi! Ask me anything about your security footage or sensors.<br><br>
+            Try: <em>"Were there any dogs today?"</em> or <em>"How many deliveries this week?"</em>
+          </div>
+        </div>
+      </div>
+      <div class="chat-suggestions" id="chat-suggestions">
+        <button onclick="sendSuggestion(this)">Any dogs this week?</button>
+        <button onclick="sendSuggestion(this)">Deliveries today?</button>
+        <button onclick="sendSuggestion(this)">Unknown visitors this week?</button>
+        <button onclick="sendSuggestion(this)">Cars on the driveway today?</button>
+        <button onclick="sendSuggestion(this)">What faces and vehicles are registered?</button>
+      </div>
+      <div class="chat-clear" onclick="clearChat()">Clear conversation</div>
+      <div id="chat-image-preview">
+        <img id="chat-preview-img" src="" alt="preview">
+        <button class="preview-remove" onclick="clearAttachment()" title="Remove image">✕</button>
+      </div>
+      <div class="chat-drop-hint">Drop image here to attach</div>
+      <div class="chat-input-row">
+        <button class="chat-attach-btn" id="chat-attach-btn" onclick="document.getElementById('chat-file-input').click()" title="Attach photo (face, vehicle, plate, animal)">📎</button>
+        <input type="file" id="chat-file-input" accept="image/*" style="display:none" onchange="handleFileSelect(event)">
+        <input id="chat-input" class="chat-input" type="text"
+               placeholder="Ask about your cameras or sensors…"
+               onkeydown="if(event.key==='Enter')sendChat()">
+        <button class="chat-send-btn" id="chat-send-btn" onclick="sendChat()">➤</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- PIN Modal -->
+<div class="modal-overlay" id="pin-modal">
+  <div class="modal">
+    <h3>🔐 Enter PIN to Disarm</h3>
+    <div class="pin-display" id="pin-display">────</div>
+    <div class="pin-error" id="pin-error">Incorrect PIN — try again</div>
+    <div class="pin-grid" id="pin-grid"></div>
+    <div class="modal-cancel" onclick="closePinModal()">Cancel</div>
+  </div>
+</div>
+
+<!-- Storage Modal -->
+<div class="modal-overlay" id="storage-modal">
+  <div class="modal" style="width:360px;max-width:95vw">
+    <h3>🗑 Manage Recordings</h3>
+    <div id="storage-modal-stats" style="font-size:0.8rem;color:var(--muted);text-align:center;margin:-6px 0 4px"></div>
+
+    <!-- Suggestions (auto-populated) -->
+    <div id="storage-suggestions"></div>
+
+    <!-- Custom options -->
+    <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:4px">
+      <div style="font-size:0.7rem;color:var(--muted);margin-bottom:8px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase">Custom</div>
+      <div style="display:flex;gap:8px;margin-bottom:8px">
+        <input id="custom-days" type="number" min="1" placeholder="Older than X days"
+          style="flex:1;padding:8px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.8rem">
+        <button class="alarm-btn btn-away" style="flex:0 0 auto;white-space:nowrap" onclick="previewCustomDays()">Preview</button>
+      </div>
+      <div style="display:flex;gap:8px">
+        <input id="custom-gb" type="number" min="1" placeholder="Free up X GB"
+          style="flex:1;padding:8px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.8rem">
+        <button class="alarm-btn btn-away" style="flex:0 0 auto;white-space:nowrap" onclick="previewCustomGb()">Preview</button>
+      </div>
+    </div>
+
+    <!-- Preview result -->
+    <div id="storage-preview" style="display:none;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px;font-size:0.8rem">
+      <div id="storage-preview-text"></div>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button class="alarm-btn btn-disarm" style="flex:1" id="confirm-delete-btn" onclick="confirmDelete()">✓ Delete These Files</button>
+        <button class="alarm-btn btn-home" style="flex:0 0 auto" onclick="clearPreview()">Cancel</button>
+      </div>
+    </div>
+
+    <!-- Result message -->
+    <div id="storage-result" style="display:none;font-size:0.82rem;text-align:center;padding:8px;border-radius:6px"></div>
+
+    <div class="modal-cancel" onclick="closeStorageModal()">Close</div>
+  </div>
+</div>
+
+<!-- Lightbox -->
+<div id="lightbox" onclick="this.classList.remove('active')">
+  <img id="lightbox-img" src="" alt="Snapshot">
+</div>
+
+<script>
+  // ── Clock ──────────────────────────────────
+  function tick() { document.getElementById('clock').textContent = new Date().toLocaleTimeString('en-GB',{hour12:false}); }
+  tick(); setInterval(tick, 1000);
+
+  // ── Web Audio siren ────────────────────────
+  let sirenInterval = null;
+  let audioCtx = null;
+
+  function getAudioCtx() {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    return audioCtx;
+  }
+
+  function beep(freq, duration, vol=0.3) {
+    try {
+      const ctx = getAudioCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(freq, ctx.currentTime);
+      osc.frequency.linearRampToValueAtTime(freq * 1.5, ctx.currentTime + duration * 0.5);
+      gain.gain.setValueAtTime(vol, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + duration);
+    } catch(e) {}
+  }
+
+  function startSiren() {
+    stopSiren();
+    let toggle = false;
+    sirenInterval = setInterval(() => {
+      beep(toggle ? 880 : 660, 0.4, 0.4);
+      toggle = !toggle;
+    }, 450);
+  }
+
+  function stopSiren() {
+    if (sirenInterval) { clearInterval(sirenInterval); sirenInterval = null; }
+  }
+
+  function armBeep() { beep(660, 0.15); setTimeout(()=>beep(880,0.15), 200); }
+  function disarmBeep() { beep(880, 0.15); setTimeout(()=>beep(660,0.15), 200); }
+
+  // ── State ──────────────────────────────────
+  let alarmState = 'DISARMED';
+  let eventCount = 0;
+
+  // ── Socket ─────────────────────────────────
+  const socket = io();
+  socket.on('connect', () => {
+    document.getElementById('conn-dot').style.background = 'var(--low)';
+    loadInitialState();
+  });
+  socket.on('disconnect', () => {
+    document.getElementById('conn-dot').style.background = 'var(--high)';
+  });
+
+  // ── Alarm socket events ─────────────────────
+  socket.on('alarm_state', (data) => {
+    alarmState = data.state;
+    updateAlarmUI(data.state, false);
+    if (data.state === 'DISARMED') { disarmBeep(); stopSiren(); }
+    else armBeep();
+    addEvent({ camera:'Alarm System', zone:'', time:data.time||new Date().toISOString(),
+      priority: data.state==='DISARMED'?'LOW':'HIGH',
+      description:`Alarm ${data.state} (${data.source})` });
+  });
+
+  socket.on('alarm_triggered', (data) => {
+    updateAlarmUI(alarmState, true, data.entry_delay);
+    addEvent({ camera:'🚨 ALARM TRIGGERED', zone:data.source, time:data.timestamp,
+      priority:'HIGH', description: data.detail });
+    if (data.entry_delay > 0) {
+      beep(880, 0.2); // single warning beep
+    }
+  });
+
+  socket.on('alarm_countdown', (data) => {
+    const el = document.getElementById('alarm-countdown');
+    el.style.display = 'block';
+    el.textContent = `⚠️ Entry delay: disarm within ${data.remaining}s or alarm will fire`;
+    // Urgent beep each second during countdown
+    beep(660, 0.1, 0.2);
+  });
+
+  socket.on('alarm_siren', (data) => {
+    if (data.active) {
+      startSiren();
+      updateAlarmUI(alarmState, true);
+    } else {
+      stopSiren();
+      document.getElementById('alarm-countdown').style.display = 'none';
+    }
+  });
+
+  socket.on('alarm_wrong_pin', () => {
+    document.getElementById('pin-error').style.display = 'block';
+    clearPin();
+    beep(220, 0.4, 0.3);
+  });
+
+  // ── Alarm UI update ────────────────────────
+  function updateAlarmUI(state, triggered, countdown=0) {
+    const panel = document.getElementById('alarm-panel');
+    const statusText = document.getElementById('alarm-status-text');
+    const subText = document.getElementById('alarm-sub');
+    const icon = document.getElementById('alarm-icon');
+    const btnHome = document.getElementById('btn-arm-home');
+    const btnAway = document.getElementById('btn-arm-away');
+    const btnDisarm = document.getElementById('btn-disarm');
+
+    panel.className = 'alarm-panel';
+    statusText.className = 'alarm-status-text';
+
+    if (triggered) {
+      panel.classList.add('triggered');
+      statusText.textContent = '🚨 ALARM TRIGGERED';
+      statusText.classList.add('ARMED_AWAY');
+      subText.textContent = 'Enter PIN to disarm';
+      icon.textContent = '🚨';
+    } else if (state === 'ARMED_HOME') {
+      panel.classList.add('armed-home');
+      statusText.textContent = '🌙 ARMED — HOME';
+      statusText.classList.add('ARMED_HOME');
+      subText.textContent = `Sensors active • ${countdown}s entry delay • Cameras boosted`;
+      icon.textContent = '🔒';
+    } else if (state === 'ARMED_AWAY') {
+      panel.classList.add('armed-away');
+      statusText.textContent = '🔒 ARMED — AWAY';
+      statusText.classList.add('ARMED_AWAY');
+      subText.textContent = 'Instant trigger on any sensor or motion';
+      icon.textContent = '🔐';
+    } else {
+      statusText.textContent = '🟢 DISARMED';
+      statusText.classList.add('DISARMED');
+      subText.textContent = 'System is off — cameras monitoring normally';
+      icon.textContent = '🔓';
+    }
+
+    const isArmed = state !== 'DISARMED';
+    btnHome.disabled = state === 'ARMED_HOME';
+    btnAway.disabled = state === 'ARMED_AWAY';
+    btnDisarm.disabled = !isArmed && !triggered;
+  }
+
+  // ── Arm ────────────────────────────────────
+  async function armAlarm(mode) {
+    const res = await fetch('/api/alarm/arm', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ mode })
+    });
+    if (!res.ok) console.error('Arm failed');
+  }
+
+  // ── PIN Modal ──────────────────────────────
+  let pinEntry = '';
+
+  function showPinModal() {
+    pinEntry = '';
+    document.getElementById('pin-display').textContent = '────';
+    document.getElementById('pin-error').style.display = 'none';
+    document.getElementById('pin-modal').classList.add('active');
+  }
+
+  function closePinModal() {
+    document.getElementById('pin-modal').classList.remove('active');
+  }
+
+  function clearPin() {
+    pinEntry = '';
+    document.getElementById('pin-display').textContent = '────';
+  }
+
+  // Build PIN keypad
+  const pinGrid = document.getElementById('pin-grid');
+  [1,2,3,4,5,6,7,8,9,'⌫',0,'✓'].forEach(k => {
+    const btn = document.createElement('div');
+    btn.className = 'pin-key';
+    btn.textContent = k;
+    btn.onclick = () => handlePinKey(String(k));
+    pinGrid.appendChild(btn);
+  });
+
+  function handlePinKey(k) {
+    beep(880, 0.05, 0.15);
+    if (k === '⌫') {
+      pinEntry = pinEntry.slice(0,-1);
+    } else if (k === '✓') {
+      submitPin();
+      return;
+    } else if (pinEntry.length < 6) {
+      pinEntry += k;
+    }
+    document.getElementById('pin-display').textContent = '•'.repeat(pinEntry.length).padEnd(4,'─');
+  }
+
+  async function submitPin() {
+    const res = await fetch('/api/alarm/disarm', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ pin: pinEntry })
+    });
+    if (res.ok) {
+      closePinModal();
+      alarmState = 'DISARMED';
+      updateAlarmUI('DISARMED', false);
+    } else {
+      document.getElementById('pin-error').style.display = 'block';
+      clearPin();
+    }
+  }
+
+  // ── Initial load ───────────────────────────
+  async function loadInitialState() {
+    const [statusResp, eventsResp] = await Promise.all([fetch('/api/status'), fetch('/api/events')]);
+    const status = await statusResp.json();
+    const events = await eventsResp.json();
+
+    if (status.alarm) {
+      alarmState = status.alarm.state;
+      updateAlarmUI(status.alarm.state, status.alarm.triggered);
+    }
+    status.cameras.forEach(initCamera);
+    status.sensors.forEach(initSensor);
+    events.slice(0,20).reverse().forEach(addEvent);
+  }
+
+  // ── Camera init ────────────────────────────
+  function initCamera(cam) {
+    const grid = document.getElementById('camera-grid');
+    const card = document.createElement('div');
+    card.className = 'camera-card';
+    card.id = `cam-${slugify(cam.name)}`;
+    card.innerHTML = `
+      <div class="camera-feed">
+        <div class="placeholder" id="placeholder-${slugify(cam.name)}">📷 Connecting…</div>
+        <img id="img-${slugify(cam.name)}" style="display:none" alt="${cam.name}">
+        <div class="motion-flash" id="flash-${slugify(cam.name)}"></div>
+      </div>
+      <div class="camera-label">
+        <span class="camera-name">${cam.name}</span>
+        <div class="status-dot ${cam.connected?'online':''}" id="dot-${slugify(cam.name)}"></div>
+      </div>`;
+    grid.appendChild(card);
+  }
+
+  socket.on('snapshots', (data) => {
+    for (const [name, snap] of Object.entries(data)) {
+      const slug = slugify(name);
+      const img = document.getElementById(`img-${slug}`);
+      const ph  = document.getElementById(`placeholder-${slug}`);
+      const dot = document.getElementById(`dot-${slug}`);
+      if (img) {
+        img.src = 'data:image/jpeg;base64,' + snap.b64;
+        img.style.display = 'block';
+        if (ph) ph.style.display = 'none';
+        if (dot) dot.className = 'status-dot ' + (snap.connected ? 'online' : '');
+      }
+    }
+  });
+
+  socket.on('motion_event', (data) => {
+    const flash = document.getElementById(`flash-${slugify(data.camera)}`);
+    if (flash) { flash.classList.remove('active'); void flash.offsetWidth; flash.classList.add('active'); }
+    addEvent(data);
+  });
+
+  // ── Sensor init ────────────────────────────
+  function initSensor(s) {
+    const grid = document.getElementById('sensor-grid');
+    const card = document.createElement('div');
+    card.className = `sensor-card ${s.is_open?'open':''}`;
+    card.id = `sensor-${slugify(s.name)}`;
+    card.innerHTML = sensorHTML(s);
+    grid.appendChild(card);
+  }
+
+  function sensorHTML(s) {
+    const icon = s.type==='window'?'🪟':'🚪';
+    const sc = s.is_open?'open':'closed';
+    const batt = s.battery!=null?`<div class="sensor-battery">🔋 ${s.battery}%</div>`:'';
+    return `<div class="sensor-icon">${icon}</div>
+      <div class="sensor-name">${s.name}</div>
+      <div class="sensor-status ${sc}">${s.is_open?'Open':'Closed'}</div>${batt}`;
+  }
+
+  socket.on('sensor_event', (data) => {
+    const card = document.getElementById(`sensor-${slugify(data.name)}`);
+    if (card) { card.className=`sensor-card ${data.is_open?'open':''}`; card.innerHTML=sensorHTML(data); }
+    addEvent({ camera:data.name, zone:data.type, time:data.time,
+      priority:data.is_open?'HIGH':'LOW',
+      description:`${data.type==='window'?'Window':'Door'} ${data.is_open?'opened':'closed'}` });
+  });
+
+  // ── Event log ──────────────────────────────
+  function addEvent(ev) {
+    eventCount++;
+    document.getElementById('event-count').textContent = eventCount;
+    const log = document.getElementById('event-log');
+    const item = document.createElement('div');
+    item.className = 'event-item';
+    const time = new Date(ev.time).toLocaleTimeString('en-GB',{hour12:false});
+    const snap = ev.snapshot ? `<img class="event-snapshot" src="data:image/jpeg;base64,${ev.snapshot}" onclick="showLightbox(this.src)" alt="snap">` : '';
+    item.innerHTML = `
+      <div class="event-header"><span class="event-camera">${ev.camera}</span><span class="event-time">${time}</span></div>
+      <div><span class="priority-badge priority-${ev.priority}">${ev.priority}</span>${ev.zone?`<span style="font-size:0.65rem;color:var(--muted);margin-left:4px">${ev.zone}</span>`:''}</div>
+      <div class="event-desc">${ev.description||''}</div>${snap}`;
+    log.insertBefore(item, log.firstChild);
+    while(log.children.length > 80) log.removeChild(log.lastChild);
+  }
+
+  // ── Lightbox ───────────────────────────────
+  function showLightbox(src) {
+    document.getElementById('lightbox-img').src = src;
+    document.getElementById('lightbox').classList.add('active');
+  }
+
+  // ── Storage ────────────────────────────────
+  let pendingDelete = null;
+
+  function updateStorageBar(stats) {
+    const pct  = stats.used_pct;
+    const card = document.getElementById('storage-bar-card');
+    const fill = document.getElementById('storage-fill');
+    const summary = document.getElementById('storage-summary');
+    const detail  = document.getElementById('storage-detail');
+
+    fill.style.width = pct + '%';
+    fill.className = 'storage-fill' + (pct >= 90 ? ' critical' : pct >= 80 ? ' warn' : '');
+    card.className  = 'storage-bar-card' + (pct >= 90 ? ' critical' : pct >= 80 ? ' warn' : '');
+
+    const icon = pct >= 90 ? '🔴' : pct >= 80 ? '🟡' : '🟢';
+    summary.textContent = `${icon} ${pct}% used — ${stats.free_gb} GB free of ${stats.total_gb} GB`;
+    detail.textContent  = `Recordings: ${stats.recordings_mb} MB across ${stats.recording_count} clips`;
+  }
+
+  socket.on('storage_stats', updateStorageBar);
+
+  socket.on('storage_warning', (data) => {
+    updateStorageBar(data);
+    // Auto-open storage modal with suggestions
+    openStorageModal(data.suggestions);
+    addEvent({
+      camera: '💾 Storage Warning',
+      zone: '',
+      time: data.timestamp,
+      priority: data.level === 'critical' ? 'HIGH' : 'MEDIUM',
+      description: `Disk ${data.used_pct}% full — ${data.free_gb} GB remaining`,
+    });
+  });
+
+  socket.on('storage_deleted', (data) => {
+    const result = document.getElementById('storage-result');
+    result.style.display = 'block';
+    result.style.background = 'rgba(34,197,94,0.1)';
+    result.style.color = 'var(--low)';
+    result.textContent = `✓ Deleted ${data.deleted} files, freed ${data.freed_gb} GB`;
+    clearPreview();
+  });
+
+  function openStorageModal(suggestions) {
+    document.getElementById('storage-result').style.display = 'none';
+    clearPreview();
+
+    // Load current stats
+    fetch('/api/storage/stats').then(r=>r.json()).then(stats => {
+      document.getElementById('storage-modal-stats').textContent =
+        `${stats.used_pct}% used · ${stats.free_gb} GB free · ${stats.recording_count} recordings (${stats.recordings_mb} MB)`;
+      updateStorageBar(stats);
+    });
+
+    // Build suggestion rows
+    const container = document.getElementById('storage-suggestions');
+    container.innerHTML = '';
+    if (suggestions && suggestions.length) {
+      suggestions.forEach(s => {
+        if (!s.preview) return;
+        const row = document.createElement('div');
+        row.className = 'suggestion-row';
+        row.innerHTML = `
+          <div>
+            <div>${s.label}</div>
+            <div class="suggestion-meta">${s.preview.count} files · ${s.preview.total_gb} GB</div>
+          </div>
+          <button class="suggestion-btn" onclick="selectSuggestion(${JSON.stringify(s).replace(/"/g,'&quot;')})">Select</button>`;
+        container.appendChild(row);
+      });
+    } else {
+      // Load suggestions fresh from API
+      fetch('/api/storage/stats').then(r=>r.json()).then(stats => {
+        const opts = [
+          {label:'Older than 7 days',  older_than_days:7},
+          {label:'Older than 14 days', older_than_days:14},
+          {label:'Older than 30 days', older_than_days:30},
+          {label:'Free up 10 GB',      free_up_gb:10},
+          {label:'Free up 50 GB',      free_up_gb:50},
+          {label:'Free up 100 GB',     free_up_gb:100},
+        ];
+        Promise.all(opts.map(o =>
+          fetch('/api/storage/preview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(o)})
+          .then(r=>r.json()).then(p=>({...o,preview:p}))
+        )).then(results => {
+          results.filter(s=>s.preview.count > 0).forEach(s => {
+            const row = document.createElement('div');
+            row.className = 'suggestion-row';
+            row.innerHTML = `
+              <div>
+                <div>${s.label}</div>
+                <div class="suggestion-meta">${s.preview.count} files · ${s.preview.total_gb} GB</div>
+              </div>
+              <button class="suggestion-btn" onclick='selectSuggestion(${JSON.stringify(s)})'>Select</button>`;
+            container.appendChild(row);
+          });
+        });
+      });
+    }
+
+    document.getElementById('storage-modal').classList.add('active');
+  }
+
+  function closeStorageModal() {
+    document.getElementById('storage-modal').classList.remove('active');
+  }
+
+  function selectSuggestion(s) {
+    pendingDelete = { older_than_days: s.older_than_days, free_up_gb: s.free_up_gb };
+    showPreview(s.preview, s.label);
+  }
+
+  async function previewCustomDays() {
+    const days = parseFloat(document.getElementById('custom-days').value);
+    if (!days || days < 1) return;
+    const res = await fetch('/api/storage/preview', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({older_than_days:days})});
+    const p = await res.json();
+    pendingDelete = { older_than_days: days };
+    showPreview(p, `Older than ${days} days`);
+  }
+
+  async function previewCustomGb() {
+    const gb = parseFloat(document.getElementById('custom-gb').value);
+    if (!gb || gb < 1) return;
+    const res = await fetch('/api/storage/preview', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({free_up_gb:gb})});
+    const p = await res.json();
+    pendingDelete = { free_up_gb: gb };
+    showPreview(p, `Free up ${gb} GB`);
+  }
+
+  function showPreview(p, label) {
+    const el = document.getElementById('storage-preview');
+    const txt = document.getElementById('storage-preview-text');
+    if (p.count === 0) {
+      txt.innerHTML = `<span style="color:var(--muted)">No files match "${label}"</span>`;
+      document.getElementById('confirm-delete-btn').style.display = 'none';
+    } else {
+      txt.innerHTML = `
+        <strong style="color:var(--high)">⚠️ ${p.count} files will be permanently deleted</strong><br>
+        <span style="color:var(--muted)">
+          Total: ${p.total_gb} GB (${p.total_mb} MB)<br>
+          ${p.oldest ? `From ${new Date(p.oldest).toLocaleDateString()} to ${new Date(p.newest).toLocaleDateString()}` : ''}
+        </span>`;
+      document.getElementById('confirm-delete-btn').style.display = '';
+    }
+    el.style.display = 'block';
+  }
+
+  function clearPreview() {
+    document.getElementById('storage-preview').style.display = 'none';
+    pendingDelete = null;
+  }
+
+  async function confirmDelete() {
+    if (!pendingDelete) return;
+    const btn = document.getElementById('confirm-delete-btn');
+    btn.disabled = true;
+    btn.textContent = 'Deleting…';
+    const res = await fetch('/api/storage/delete', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(pendingDelete)
+    });
+    const result = await res.json();
+    btn.disabled = false;
+    btn.textContent = '✓ Delete These Files';
+    clearPreview();
+    const el = document.getElementById('storage-result');
+    el.style.display = 'block';
+    el.style.background = 'rgba(34,197,94,0.1)';
+    el.style.color = 'var(--low)';
+    el.textContent = `✓ Done — deleted ${result.deleted} files, freed ${result.freed_gb} GB`;
+    // Refresh stats
+    fetch('/api/storage/stats').then(r=>r.json()).then(updateStorageBar);
+  }
+
+  // Load storage stats on connect
+  socket.on('connect', () => {
+    fetch('/api/storage/stats').then(r=>r.json()).then(updateStorageBar);
+  });
+
+  function slugify(s) { return s.toLowerCase().replace(/[^a-z0-9]/g,'-'); }
+
+  // ── Tab switching ─────────────────────────────────────────────────────────
+  function switchTab(tab) {
+    document.getElementById('pane-log').style.display  = tab === 'log'  ? '' : 'none';
+    document.getElementById('pane-chat').style.display = tab === 'chat' ? 'flex' : 'none';
+    document.getElementById('tab-log').classList.toggle('active',  tab === 'log');
+    document.getElementById('tab-chat').classList.toggle('active', tab === 'chat');
+    if (tab === 'chat') {
+      scrollChatToBottom();
+      document.getElementById('chat-input').focus();
+    }
+  }
+
+  // ── Chat ─────────────────────────────────────────────────────────────────
+  let chatBusy = false;
+
+  function appendChatMsg(role, text, id) {
+    const box = document.getElementById('chat-messages');
+    const msg = document.createElement('div');
+    msg.className = 'chat-msg ' + role;
+    if (id) msg.id = id;
+    const bubble = document.createElement('div');
+    bubble.className = 'chat-bubble';
+    bubble.innerHTML = text.replace(/\n/g, '<br>');
+    msg.appendChild(bubble);
+    box.appendChild(msg);
+    scrollChatToBottom();
+    return msg;
+  }
+
+  function scrollChatToBottom() {
+    const box = document.getElementById('chat-messages');
+    box.scrollTop = box.scrollHeight;
+  }
+
+  // eventIndex: map of id -> event data, populated per response
+  let chatEventIndex = {};
+
+  // ── Image attachment state ─────────────────────────────────────────────────
+  let attachedFile = null;
+
+  function handleFileSelect(event) {
+    const file = event.target.files[0];
+    if (file) attachImage(file);
+    event.target.value = ''; // reset so same file can be re-selected
+  }
+
+  function attachImage(file) {
+    attachedFile = file;
+    const reader = new FileReader();
+    reader.onload = e => {
+      document.getElementById('chat-preview-img').src = e.target.result;
+      document.getElementById('chat-image-preview').style.display = 'block';
+      document.getElementById('chat-attach-btn').classList.add('has-image');
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function clearAttachment() {
+    attachedFile = null;
+    document.getElementById('chat-image-preview').style.display = 'none';
+    document.getElementById('chat-preview-img').src = '';
+    document.getElementById('chat-attach-btn').classList.remove('has-image');
+  }
+
+  // Drag and drop onto the chat pane
+  (function() {
+    const pane = document.getElementById('pane-chat');
+    if (!pane) return;
+    pane.addEventListener('dragover', e => { e.preventDefault(); pane.classList.add('chat-pane-dragging'); });
+    pane.addEventListener('dragleave', () => pane.classList.remove('chat-pane-dragging'));
+    pane.addEventListener('drop', e => {
+      e.preventDefault();
+      pane.classList.remove('chat-pane-dragging');
+      const file = e.dataTransfer.files[0];
+      if (file && file.type.startsWith('image/')) attachImage(file);
+    });
+  })();
+
+  async function sendChat() {
+    if (chatBusy) return;
+    const input = document.getElementById('chat-input');
+    const q = input.value.trim();
+    if (!q) return;
+
+    input.value = '';
+    chatBusy = true;
+    document.getElementById('chat-send-btn').disabled = true;
+    document.getElementById('chat-suggestions').style.display = 'none';
+
+    appendChatMsg('user', escapeHtml(q));
+
+    const thinkingId = 'chat-thinking-' + Date.now();
+    appendChatMsg('assistant thinking', '⏳ Searching your event history…', thinkingId);
+
+    try {
+      let res;
+      if (attachedFile) {
+        // Multipart upload — send image + question together
+        const formData = new FormData();
+        formData.append('file', attachedFile);
+        formData.append('question', q || 'What is this? Help me register it.');
+        res = await fetch('/api/chat/upload', { method: 'POST', body: formData });
+        clearAttachment();
+      } else {
+        res = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ question: q })
+        });
+      }
+      const data = await res.json();
+
+      // Remove thinking bubble
+      const t = document.getElementById(thinkingId);
+      if (t) t.remove();
+
+      // Register events in index
+      (data.events || []).forEach(ev => { chatEventIndex[ev.id] = ev; });
+
+      // Render answer with inline event cards
+      const msgEl = appendChatMsgRich('assistant', data.answer || 'Sorry, no answer.', data.events || []);
+    } catch (err) {
+      const t = document.getElementById(thinkingId);
+      if (t) t.remove();
+      appendChatMsg('assistant', '⚠️ Error reaching the server. Please try again.');
+    }
+
+    chatBusy = false;
+    document.getElementById('chat-send-btn').disabled = false;
+    input.focus();
+  }
+
+  function appendChatMsgRich(role, rawText, events) {
+    const box = document.getElementById('chat-messages');
+    const msg = document.createElement('div');
+    msg.className = 'chat-msg ' + role;
+
+    const bubble = document.createElement('div');
+    bubble.className = 'chat-bubble';
+
+    // Build event id -> event map for quick lookup
+    const evMap = {};
+    events.forEach(ev => { evMap[ev.id] = ev; });
+
+    // Split text on [EVENT:id] markers and render
+    const parts = rawText.split(/\[EVENT:(\d+)\]/);
+    const frag = document.createDocumentFragment();
+
+    parts.forEach((part, i) => {
+      if (i % 2 === 0) {
+        // Text segment
+        if (part) {
+          const span = document.createElement('span');
+          span.innerHTML = escapeHtml(part).replace(/\n/g, '<br>');
+          frag.appendChild(span);
+        }
+      } else {
+        // Event ID
+        const evId = parseInt(part);
+        const ev = evMap[evId] || chatEventIndex[evId];
+        if (ev) {
+          frag.appendChild(buildEventCard(ev));
+        }
+      }
+    });
+
+    bubble.appendChild(frag);
+    msg.appendChild(bubble);
+    box.appendChild(msg);
+    scrollChatToBottom();
+    return msg;
+  }
+
+  function buildEventCard(ev) {
+    const card = document.createElement('div');
+    card.className = 'chat-event-card';
+    card.onclick = () => openEventModal(ev.id);
+
+    const ts = new Date(ev.timestamp);
+    const timeStr = ts.toLocaleString(undefined, {weekday:'short',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+    const hasClip = !!ev.clip_path;
+    const hasSnap = !!ev.snapshot_path;
+
+    if (hasSnap) {
+      const img = document.createElement('img');
+      img.className = 'chat-event-thumb';
+      img.src = `/api/snapshot/${ev.id}`;
+      img.onerror = () => img.replaceWith(thumbPlaceholder(ev.subject));
+      card.appendChild(img);
+    } else {
+      card.appendChild(thumbPlaceholder(ev.subject));
+    }
+
+    const info = document.createElement('div');
+    info.className = 'chat-event-info';
+    info.innerHTML = `
+      <div class="chat-event-time">${escapeHtml(timeStr)} · ${escapeHtml(ev.camera)}</div>
+      <div class="chat-event-desc">${escapeHtml(ev.description || ev.subject || 'Motion event')}</div>
+    `;
+    card.appendChild(info);
+
+    const play = document.createElement('div');
+    play.className = 'chat-event-play';
+    play.textContent = hasClip ? '▶' : '🔍';
+    card.appendChild(play);
+
+    return card;
+  }
+
+  function thumbPlaceholder(subject) {
+    const div = document.createElement('div');
+    div.className = 'chat-event-thumb-placeholder';
+    const icons = {human:'🧍',animal:'🐾',vehicle:'🚗',object:'📦',unknown:'📷'};
+    div.textContent = icons[subject] || '📷';
+    return div;
+  }
+
+  // ── Event modal ──────────────────────────────────────────────────────────
+
+  function openEventModal(eventId) {
+    const ev = chatEventIndex[eventId];
+    if (!ev) return;
+
+    const modal = document.getElementById('event-modal');
+    const mediaEl = document.getElementById('event-modal-media');
+    const metaEl  = document.getElementById('event-modal-meta');
+
+    // Media
+    mediaEl.innerHTML = '';
+    if (ev.clip_path) {
+      mediaEl.innerHTML = `
+        <video controls autoplay playsinline>
+          <source src="/api/clip/${ev.id}" type="video/mp4">
+          Your browser does not support video playback.
+        </video>`;
+    } else if (ev.snapshot_path) {
+      mediaEl.innerHTML = `<img src="/api/snapshot/${ev.id}" alt="Event snapshot">`;
+    } else {
+      mediaEl.innerHTML = `<div class="no-media">📷 No recording available for this event</div>`;
+    }
+
+    // Meta
+    const ts = new Date(ev.timestamp);
+    const timeStr = ts.toLocaleString(undefined, {
+      weekday:'long', year:'numeric', month:'long', day:'numeric',
+      hour:'2-digit', minute:'2-digit', second:'2-digit'
+    });
+    const priorityClass = (ev.priority || '').toLowerCase();
+    const threatClass   = (ev.threat   || '').toLowerCase();
+    const faces = ev.known_faces ? `· 👤 ${escapeHtml(ev.known_faces)}` : '';
+
+    const dlLinks = [];
+    if (ev.clip_path) dlLinks.push(`<a class="event-dl-btn" href="/api/clip/${ev.id}" download>⬇ Download clip</a>`);
+    if (ev.snapshot_path) dlLinks.push(`<a class="event-dl-btn" href="/api/snapshot/${ev.id}" download>⬇ Download snapshot</a>`);
+
+    metaEl.innerHTML = `
+      <div class="event-modal-title">${escapeHtml(ev.description || 'Motion Event')}</div>
+      <div class="event-modal-detail">
+        📅 ${escapeHtml(timeStr)}<br>
+        📷 ${escapeHtml(ev.camera)} / ${escapeHtml(ev.zone || '')} ${faces}
+      </div>
+      <div class="event-modal-badges">
+        <span class="event-badge">${escapeHtml(ev.subject || 'unknown')}</span>
+        ${priorityClass ? `<span class="event-badge ${priorityClass}">${priorityClass.toUpperCase()} priority</span>` : ''}
+        ${ev.unusual ? '<span class="event-badge high">⚠ UNUSUAL</span>' : ''}
+      </div>
+      ${dlLinks.length ? `<div class="event-modal-dl">${dlLinks.join('')}</div>` : ''}
+    `;
+
+    modal.style.display = 'flex';
+    document.body.style.overflow = 'hidden';
+  }
+
+  function closeEventModal(e) {
+    if (e && e.target !== document.getElementById('event-modal')) return;
+    const modal = document.getElementById('event-modal');
+    // Stop video playback
+    const video = modal.querySelector('video');
+    if (video) { video.pause(); video.src = ''; }
+    modal.style.display = 'none';
+    document.body.style.overflow = '';
+  }
+
+  // Close on Escape key
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') closeEventModal({target: document.getElementById('event-modal')});
+  });
+
+  function sendSuggestion(btn) {
+    document.getElementById('chat-input').value = btn.textContent.trim();
+    sendChat();
+  }
+
+  function clearChat() {
+    document.getElementById('chat-messages').innerHTML = `
+      <div class="chat-msg assistant">
+        <div class="chat-bubble">Conversation cleared. What would you like to know?</div>
+      </div>`;
+    chatEventIndex = {};
+    document.getElementById('chat-suggestions').style.display = '';
+    fetch('/api/chat/clear', {method:'POST'});
+  }
+
+  function escapeHtml(s) {
+    if (!s) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+</script>
+
+<!-- Video / Event Modal -->
+<div class="modal-overlay" id="event-modal" onclick="closeEventModal(event)">
+  <div class="event-modal-inner" onclick="event.stopPropagation()">
+    <button class="event-modal-close" onclick="closeEventModal()">✕</button>
+
+    <div class="event-modal-media" id="event-modal-media">
+      <!-- video or image injected here -->
+    </div>
+
+    <div class="event-modal-meta" id="event-modal-meta">
+      <!-- metadata injected here -->
+    </div>
+  </div>
+</div>
+</body>
+</html>
