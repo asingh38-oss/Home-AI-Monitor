@@ -1,201 +1,146 @@
 # 🏠 Home AI Monitor
 
-A Raspberry Pi 5 home security system with AI-powered analysis, per-zone motion sensitivity, facial recognition, and real-time push notifications.
+An AI-powered home security system built on macOS with computer vision, 
+natural language event querying, and local IoT sensor integration.
+
+Built as both a functional home security setup and a portfolio demonstration 
+of practical AI engineering — custom intelligence layers on top of real infrastructure, 
+not pre-built solutions.
 
 ---
 
-## Architecture Overview
+## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        Raspberry Pi 5                           │
-│                                                                 │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐  │
-│  │   Camera 1   │  │   Camera 2   │  │   Camera 3/4         │  │
-│  │  (Kitchen)   │  │ (Front Door) │  │ (Garden / Hallway)   │  │
-│  └──────┬───────┘  └──────┬───────┘  └──────────┬───────────┘  │
-│         │                 │                     │               │
-│         └─────────────────┼─────────────────────┘               │
-│                           │                                     │
-│                 ┌─────────▼─────────┐                           │
-│                 │  CameraManager    │                           │
-│                 │  ┌─────────────┐  │                           │
-│                 │  │ ZoneMotion  │  │ ← Per-zone MOG2           │
-│                 │  │  Detector   │  │   sensitivity levels      │
-│                 │  └─────────────┘  │                           │
-│                 │  ┌─────────────┐  │                           │
-│                 │  │    Face     │  │ ← face_recognition        │
-│                 │  │ Recognition │  │   (local, on-device)      │
-│                 │  └─────────────┘  │                           │
-│                 └─────────┬─────────┘                           │
-│                           │                                     │
-│  ┌────────────────────┐   │   ┌──────────────────────────────┐  │
-│  │ MotionSensorMgr    │   │   │       AIAnalyzer             │  │
-│  │ (PIR via GPIO)     │   │   │  Sends frame to Claude API   │  │
-│  └─────────┬──────────┘   │   │  → human/animal/object       │  │
-│            │              │   │  → threat level              │  │
-│            └──────────────┤   │  → unusual activity flag     │  │
-│                           │   └──────────────┬───────────────┘  │
-│                           │                  │                  │
-│                 ┌─────────▼──────────────────▼──────────┐       │
-│                 │           Notifier + Dashboard         │       │
-│                 └────────────────────────────────────────┘       │
-└─────────────────────────────┬───────────────────────────────────┘
-                              │
-              ┌───────────────┼────────────────────┐
-              │               │                    │
-     ┌────────▼──────┐  ┌─────▼──────┐   ┌────────▼────────┐
-     │  ntfy.sh App  │  │  Web       │   │  Claude Vision  │
-     │  (Phone Push) │  │  Dashboard │   │  API (cloud AI) │
-     └───────────────┘  └────────────┘   └─────────────────┘
-```
-
----
-
-## AI Processing Strategy: Hybrid (Recommended)
-
-| Task | Where | Why |
-|---|---|---|
-| Motion detection | **Local (Pi)** | Zero latency, zero cost, no network needed |
-| Face recognition | **Local (Pi)** | Privacy-sensitive, works offline |
-| Human vs animal classification | **Cloud (Claude API)** | Requires vision model, too heavy for Pi |
-| Unusual activity description | **Cloud (Claude API)** | Natural language, nuanced understanding |
-| PIR sensor alerts | **Local (Pi)** | Instant, hardware-level |
-
-The Pi handles ~95% of processing. Claude API is only called when significant motion is detected, with a configurable cooldown (default: 20 seconds per camera). A typical active day might cost **$0.01–$0.10** in API usage.
+\```
+┌─────────────────────────────────────────────────────────┐
+│                      MacBook Pro                        │
+│                                                         │
+│  ┌─────────────────────────────────────────────────┐   │
+│  │              CameraManager                      │   │
+│  │  ┌──────────────────┐  ┌─────────────────────┐  │   │
+│  │  │  Per-Zone MOG2   │  │  Confidence Gating  │  │   │
+│  │  │  Motion Detect   │  │  (skip low-conf     │  │   │
+│  │  └────────┬─────────┘  │   frames)           │  │   │
+│  │           │            └─────────────────────┘  │   │
+│  └───────────┼─────────────────────────────────────┘   │
+│              │                                          │
+│  ┌───────────▼─────────────────────────────────────┐   │
+│  │              Two-Model AI Pipeline               │   │
+│  │  ┌──────────────────────┐                       │   │
+│  │  │  Claude Vision API   │ ← Scene analysis,     │   │
+│  │  │  (scene analysis)    │   threat level,       │   │
+│  │  └──────────┬───────────┘   subject ID          │   │
+│  │             │                                   │   │
+│  │  ┌──────────▼───────────┐                       │   │
+│  │  │  Claude Haiku        │ ← Conversational      │   │
+│  │  │  (chat engine)       │   queries over        │   │
+│  │  └──────────────────────┘   event history       │   │
+│  └─────────────────────────────────────────────────┘   │
+│              │                                          │
+│  ┌───────────▼─────────────────────────────────────┐   │
+│  │              EventStore (SQLite)                 │   │
+│  │  camera_events | sensor_events | 3-month TTL    │   │
+│  └───────────┬─────────────────────────────────────┘   │
+│              │                                          │
+│  ┌───────────▼─────────────────────────────────────┐   │
+│  │  Zigbee2MQTT  ←  SONOFF ZBDongle-E              │   │
+│  │  Contact sensors (doors/windows)                │   │
+│  └─────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────┘
+          │                    │
+  ┌───────▼──────┐    ┌────────▼────────┐
+  │  Web Dashboard│    │  Push Alerts    │
+  │  + AI Chat   │    │  (ntfy.sh)      │
+  └──────────────┘    └─────────────────┘
+\```
 
 ---
 
-## Per-Zone Motion Sensitivity
+## Key Engineering Decisions
 
-Each camera can have multiple named zones, each with independent sensitivity:
+**Two-model AI strategy**
+Motion detection (MOG2) runs locally at zero cost. Claude Vision is only 
+called when motion clears a confidence threshold — a typical active day 
+costs $0.01–$0.10 in API usage. A separate Haiku instance handles 
+conversational queries against the event history, keeping costs low 
+while preserving full reasoning capability for scene analysis.
 
-```
-┌─────────────────────────────────────┐
-│         FRONT DOOR CAMERA           │
-│  ┌───────────────────────────────┐  │
-│  │    street_distant (LOW)       │  │ ← Ignores cars, people on pavement
-│  └───────────────────────────────┘  │
-│                                     │
-│  ┌───────────────────────────────┐  │
-│  │                               │  │
-│  │       doorstep (VERY HIGH)    │  │ ← Triggers on any presence
-│  │                               │  │
-│  └───────────────────────────────┘  │
-└─────────────────────────────────────┘
-```
+**Per-zone MOG2 sensitivity**
+Each camera zone has independent sensitivity parameters: minimum contour 
+area, MOG2 history length, variance threshold, and blur kernel. A 
+street-facing zone can be set to `low` to ignore passing cars while a 
+doorstep zone is set to `very_high` to trigger on any presence.
 
-Sensitivity levels: `very_low` → `low` → `medium` → `high` → `very_high`
+**Confidence gating**
+Frames are only forwarded to the Vision API if local motion analysis 
+exceeds a confidence threshold. This eliminates API calls for lighting 
+changes, shadows, and noise — the most common source of false positives 
+in naive implementations.
 
-Each level adjusts:
-- **Minimum contour area** — how large must movement be
-- **MOG2 history** — how many frames to build background model
-- **Variance threshold** — how much pixel change counts as motion
-- **Blur kernel** — smoothing to reduce noise
+**Event citation system**
+When the chat engine answers a query ("were there any deliveries today?"), 
+it cites specific event IDs inline. The dashboard resolves these citations 
+into clickable thumbnail cards linked to the original video clip and snapshot.
 
----
+**Local IoT stack**
+Zigbee contact sensors feed through SONOFF ZBDongle-E → Zigbee2MQTT → 
+MQTT broker, keeping all sensor data on-device. No cloud dependency for 
+door/window state.
 
-## File Structure
-
-```
-home_monitor/
-├── main.py                  # Entry point — starts all services
-├── config.yaml              # All configuration (edit this first)
-├── camera_manager.py        # Cameras, zone motion detection, face recognition
-├── ai_analyzer.py           # Claude Vision API integration
-├── motion_sensor_manager.py # PIR sensors via GPIO
-├── notifier.py              # Push notifications (ntfy.sh / Pushover)
-├── dashboard.py             # Flask + SocketIO web server
-├── templates/
-│   └── index.html           # Real-time web dashboard UI
-├── known_faces/             # Add name.jpg files here for face recognition
-├── recordings/              # Auto-saved motion clips
-├── requirements.txt
-└── install.sh               # One-shot setup script
-```
+**Camera-agnostic RTSP layer**
+The `rtsp_path` config value is the only thing that changes between camera 
+brands. NVR setups (Night Owl, Hikvision, etc.) and direct-connect cameras 
+(Reolink) both work without code changes.
 
 ---
 
-## Quick Start
+## Stack
 
-### 1. Install
-```bash
-git clone <this-repo> home_monitor && cd home_monitor
-bash install.sh
-```
-
-### 2. Configure
-Edit `config.yaml`:
-- Set your `anthropic_api_key`
-- Set a unique `ntfy.topic` (e.g. `my-house-abc123`)
-- Set camera `source` values (0, 1, 2… or RTSP URLs)
-- Adjust zone `coordinates` to match your camera views
-- Set GPIO pin numbers for your PIR sensors
-
-### 3. Add known faces
-```bash
-# Put clear face photos in known_faces/
-cp john.jpg known_faces/John.jpg
-cp jane.jpg known_faces/Jane.jpg
-```
-
-### 4. Test run
-```bash
-source venv/bin/activate
-python main.py
-```
-Open dashboard: `http://<pi-ip>:5000`
-
-### 5. Get push notifications on phone
-- Install the **ntfy** app (iOS / Android — free)
-- Subscribe to your topic (the one set in config.yaml)
-- Alerts will arrive instantly when triggered
-
-### 6. Run on boot
-```bash
-sudo systemctl start home-monitor
-sudo systemctl status home-monitor
-```
+- **Python** — async architecture, multiprocessing per camera stream
+- **OpenCV** — MOG2 background subtraction, per-zone motion analysis
+- **Claude Vision API** — scene analysis, subject classification, threat assessment
+- **Claude Haiku** — conversational event querying
+- **SQLite** — event store with automatic TTL pruning
+- **Zigbee2MQTT + MQTT** — local IoT sensor integration
+- **Flask + SocketIO** — real-time web dashboard
+- **Tailscale** — recommended for secure remote access
 
 ---
 
-## Hardware Shopping List
+## Configuration
 
-| Item | Notes |
-|---|---|
-| Raspberry Pi 5 (8GB) | 8GB recommended for face recognition |
-| USB/CSI cameras ×3–4 | Night vision (IR) models e.g. Reolink, Arducam |
-| PIR sensors ×3–4 | HC-SR501, ~£2 each |
-| MicroSD 64GB+ | Class 10 / A2 for recording |
-| Heatsink + fan | Pi 5 runs warm under load |
-| PoE hat (optional) | Powers cameras over ethernet |
+Copy `config.example.yaml` to `config.yaml` and fill in your values:
 
----
+\```yaml
+cameras:
+  - id: front_door
+    name: "Front Door"
+    rtsp_url: "rtsp://USERNAME:PASSWORD@CAMERA_IP:554"
+    rtsp_path: "/h264Preview_01_main"
+    zones:
+      - name: "doorstep"
+        sensitivity: very_high
 
-## Useful Commands
+ai:
+  anthropic_api_key: "YOUR_KEY_HERE"
+  vision_model: "claude-opus-4-20250514"
+  chat_model: "claude-haiku-4-5"
+  analyze_cooldown_seconds: 20
 
-```bash
-# View live logs
-sudo journalctl -u home-monitor -f
+storage:
+  db_path: "./home_monitor.db"
 
-# Restart service
-sudo systemctl restart home-monitor
-
-# Check camera sources
-v4l2-ctl --list-devices
-
-# Test a camera
-python3 -c "import cv2; c=cv2.VideoCapture(0); print(c.isOpened())"
-
-# Check GPIO pins
-gpio readall
-```
+zigbee:
+  mqtt_broker: "localhost"
+  mqtt_port: 1883
+\```
 
 ---
 
-## Privacy Notes
+## Privacy
 
-- Face recognition runs **entirely on the Pi** — no face data leaves your network
-- Camera frames are only sent to the Claude API when motion is detected, with configurable cooldown
-- All recordings are stored locally in `./recordings/`
-- The dashboard is only accessible on your local network (no external exposure by default)
+- All video processing runs locally — frames are only sent to the Claude API 
+  when motion is detected, with a configurable cooldown
+- Zigbee sensor data never leaves your network
+- Recordings and event database are stored locally
+- Dashboard is LAN-only by default; Tailscale recommended for remote access
