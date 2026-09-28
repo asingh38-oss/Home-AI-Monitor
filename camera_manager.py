@@ -199,7 +199,7 @@ class CameraManager:
         self.notifier = notifier
         self.alarm_manager = alarm_manager
         self.event_store = event_store
-        self.nvr_cfg = config["nvr"]
+        self.nvr_cfg = config.get("nvr", {})
         self.states: dict[str, CameraState] = {}
         self.face_recognizer = FaceRecognizer(config.get("face_recognition", {}))
         self.recorder = ClipRecorder(config.get("recording", {}))
@@ -208,16 +208,22 @@ class CameraManager:
         self._quiet_start, self._quiet_end = self._parse_quiet_hours()
         self._event_callbacks = []
 
-        for cam_cfg in config.get("cameras", []):
+
+        for idx, cam_cfg in enumerate(config.get("cameras", []), start=1):
             if not cam_cfg.get("enabled", True):
                 continue
-            channel = cam_cfg["channel"]
-            url = _build_rtsp_url(self.nvr_cfg, channel)
+            channel = cam_cfg.get("channel", idx)
+            if "rtsp_url" in cam_cfg:
+                base = cam_cfg["rtsp_url"].rstrip("/")
+                path = cam_cfg.get("rtsp_path", "")
+                url = base + path if path else base
+            else:
+                url = _build_rtsp_url(self.nvr_cfg, channel)
             state = CameraState(
                 name=cam_cfg["name"],
                 channel=channel,
                 rtsp_url=url,
-            )
+            ) 
             for zone in cam_cfg.get("zones", [{"name": "default", "sensitivity": "medium"}]):
                 state.zone_subtractors[zone["name"]] = ZoneDetector(
                     zone["name"], zone.get("sensitivity", "medium")
