@@ -19,4 +19,9 @@ venv/
 .DS_Store
 
 # Logs
-*.log
+*.logCLAUDE.local.md
+config.yaml
+.env
+*.db
+known_faces/
+recordings/
