@@ -19,7 +19,8 @@ venv/
 .DS_Store
 
 # Logs
-*.logCLAUDE.local.md
+*.log
+CLAUDE.local.md
 config.yaml
 .env
 *.db
