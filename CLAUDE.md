@@ -24,6 +24,7 @@ requirements.txt      — Python deps
 setup_mac.sh          — DEPRECATED. Do not patch. Write setup_ubuntu.sh fresh.
 storage_manager.py    — Disk usage monitor
 templates/index.html  — Dashboard UI: camera grid, chat panel, alarm
+zigbee_sensors.py     — Zigbee2MQTT sensor subscriber (paho-mqtt)
 
 ## Cameras
 Reolink RLC-810A, direct RTSP (no NVR). Each camera has its own `rtsp_url` in config;
@@ -31,6 +32,7 @@ the shared `nvr:` block is optional.
 Format: rtsp://USER:PASSWORD@CAMERA_IP:554/h264Preview_01_main  (placeholders only, never real values)
 
 ## Config
+
 config.yaml is local to each machine and holds secrets. Never commit it.
 Sections: cameras, recording.output_dir, face_recognition.known_faces_dir, ai.api_key.
 Keep config.example.yaml in sync whenever a new config key is added, using placeholder values only.
