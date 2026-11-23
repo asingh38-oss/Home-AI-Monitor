@@ -328,6 +328,7 @@ class Dashboard:
                 port=port,
                 use_reloader=False,
                 log_output=False,
+		allow_unsafe_werkzeug=True,
             )
 
         thread = Thread(target=_serve, daemon=True)

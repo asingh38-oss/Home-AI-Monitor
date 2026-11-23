@@ -30,6 +30,19 @@ class Notifier:
             self._session = aiohttp.ClientSession()
         return self._session
 
+    async def send(self, message: str, priority: str = "low", image_b64: str | None = None):
+        """Compatibility wrapper for camera_manager.py's call signature.
+        Packs args into the alert dict send_alert expects.
+        Note: image_b64 is accepted but not yet attached by ntfy/pushover.
+        """
+        from datetime import datetime, timezone
+        alert = {
+            "summary": message,
+            "priority": priority.lower(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        await self.send_alert(alert)
+
     async def send_alert(self, alert: dict):
         """Dispatch alert to all enabled notification channels."""
         tasks = []

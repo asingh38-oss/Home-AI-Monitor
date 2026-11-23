@@ -4,6 +4,7 @@ Manages RTSP streams from the Night Owl PoE NVR.
 Per-zone MOG2 motion detection, face recognition, snapshot capture, clip recording.
 """
 
+import re
 import asyncio
 import base64
 import logging
@@ -266,7 +267,7 @@ class CameraManager:
         self.recorder.stop_all()
 
     async def _camera_loop(self, name: str, state: CameraState, stop_event: asyncio.Event):
-        log.info("Camera loop starting: %s → %s", name, state.rtsp_url)
+        log.info("Camera loop starting: %s → %s", name, re.sub(r"//[^@]+@", "//***@", state.rtsp_url))
         loop = asyncio.get_event_loop()
 
         while not stop_event.is_set():
